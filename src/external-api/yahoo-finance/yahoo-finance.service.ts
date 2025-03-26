@@ -2,8 +2,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { firstValueFrom } from 'rxjs';
-import { map } from 'rxjs/operators';
+import { Observable, catchError, map, forkJoin, of } from 'rxjs';
+import { AxiosResponse } from 'axios';
 
 @Injectable()
 export class YahooFinanceService {
@@ -276,5 +276,107 @@ export class YahooFinanceService {
     }
 
     return mockEarnings;
+  }
+
+  getStockChart(
+    symbol: string,
+    interval: string = '1d',
+    range: string = '1mo',
+    includePrePost: string = 'false',
+    events: string = 'div,split',
+  ): Observable<any> {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`;
+
+    this.logger.log(`Fetching chart data for ${symbol} with range ${range}`);
+
+    return this.httpService
+      .get(url, {
+        params: {
+          interval,
+          range,
+          includePrePost,
+          events,
+        },
+      })
+      .pipe(
+        map((response: AxiosResponse) => response.data),
+        catchError((error) => {
+          this.logger.error(`Error fetching chart data: ${error.message}`);
+          throw error;
+        }),
+      );
+  }
+
+  getMarketIndices(): Observable<any> {
+    const indices = ['^GSPC', '^IXIC', '^DJI', 'BTC-USD'];
+
+    // Create an observable for each index request
+    const requests = indices.map((symbol) => {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`;
+
+      return this.httpService
+        .get(url, {
+          params: {
+            interval: '1d',
+            range: '1d',
+          },
+        })
+        .pipe(
+          map((response: AxiosResponse) => {
+            const data = response.data.chart.result[0];
+            const quote = data.indicators.quote[0];
+            const lastIndex = quote.close.length - 1;
+
+            return {
+              symbol,
+              name: this.getIndexName(symbol),
+              price: quote.close[lastIndex],
+              previousClose: data.meta.chartPreviousClose,
+              change: quote.close[lastIndex] - data.meta.chartPreviousClose,
+              changePercent:
+                ((quote.close[lastIndex] - data.meta.chartPreviousClose) /
+                  data.meta.chartPreviousClose) *
+                100,
+            };
+          }),
+          catchError((error) => {
+            this.logger.error(
+              `Error fetching data for ${symbol}: ${error.message}`,
+            );
+            // Return a placeholder object instead of failing the entire request
+            return of({
+              symbol,
+              name: this.getIndexName(symbol),
+              price: 0,
+              previousClose: 0,
+              change: 0,
+              changePercent: 0,
+              error: true,
+            });
+          }),
+        );
+    });
+
+    // Combine all requests into a single observable that emits when all requests complete
+    return forkJoin(requests).pipe(
+      map((results) => {
+        // Convert array of results to an object with symbols as keys
+        const resultObject = {};
+        results.forEach((item) => {
+          resultObject[item.symbol] = item;
+        });
+        return resultObject;
+      }),
+    );
+  }
+
+  private getIndexName(symbol: string): string {
+    const names = {
+      '^GSPC': 'S&P 500',
+      '^IXIC': 'NASDAQ',
+      '^DJI': 'Dow Jones',
+      'BTC-USD': 'Bitcoin USD',
+    };
+    return names[symbol] || symbol;
   }
 }
