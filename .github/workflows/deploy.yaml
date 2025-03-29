@@ -1,0 +1,149 @@
+# .github/workflows/deploy.yml
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-central-1
+  ECR_REPOSITORY: marketmind-api
+  EKS_CLUSTER_NAME: marketmind-cluster
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Run tests
+        run: npm test
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+      
+      - name: Save ECR image tag for deploy job
+        run: echo ${{ github.sha }} > image-tag.txt
+        
+      - name: Upload image tag as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: image-tag
+          path: image-tag.txt
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      
+      - name: Download image tag artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: image-tag
+      
+      - name: Set image tag environment variable
+        run: echo "IMAGE_TAG=$(cat image-tag.txt)" >> $GITHUB_ENV
+      
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+      
+      - name: Get ECR Repository URL
+        run: |
+          ECR_REPOSITORY_URL=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --query 'repositories[0].repositoryUri' --output text)
+          echo "ECR_REPOSITORY_URL=$ECR_REPOSITORY_URL" >> $GITHUB_ENV
+      
+      - name: Get DB credentials from AWS Secrets Manager
+        run: |
+          SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id marketmind-db-credentials --query SecretString --output text)
+          echo "DB_USERNAME=$(echo $SECRET_VALUE | jq -r '.username')" >> $GITHUB_ENV
+          echo "DB_PASSWORD=$(echo $SECRET_VALUE | jq -r '.password')" >> $GITHUB_ENV
+          echo "DB_HOST=$(echo $SECRET_VALUE | jq -r '.host')" >> $GITHUB_ENV
+          echo "DB_PORT=$(echo $SECRET_VALUE | jq -r '.port')" >> $GITHUB_ENV
+          echo "DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname')" >> $GITHUB_ENV
+      
+      - name: Create Kubernetes namespace
+        run: kubectl apply -f kubernetes/namespace.yaml
+      
+      - name: Update Kubernetes secrets
+        run: |
+          kubectl create secret generic db-credentials \
+            --namespace=marketmind \
+            --from-literal=username=${{ env.DB_USERNAME }} \
+            --from-literal=password=${{ env.DB_PASSWORD }} \
+            --from-literal=host=${{ env.DB_HOST }} \
+            --from-literal=port=${{ env.DB_PORT }} \
+            --from-literal=dbname=${{ env.DB_NAME }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+      
+      - name: Deploy to Kubernetes
+        run: |
+          # Replace placeholders in deployment file
+          sed -i "s|\${ECR_REPOSITORY_URL}|${{ env.ECR_REPOSITORY_URL }}|g" kubernetes/deployment.yaml
+          sed -i "s|\${IMAGE_TAG}|${{ env.IMAGE_TAG }}|g" kubernetes/deployment.yaml
+          
+          # Apply Kubernetes manifests
+          kubectl apply -f kubernetes/deployment.yaml
+          kubectl apply -f kubernetes/service.yaml
+          kubectl apply -f kubernetes/ingress.yaml
+      
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/marketmind-api -n marketmind
+          echo "Deployment completed successfully!"
