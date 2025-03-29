@@ -119,7 +119,7 @@ jobs:
           echo "DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname')" >> $GITHUB_ENV
       
       - name: Create Kubernetes namespace
-        run: kubectl apply -f kubernetes/namespace.yaml
+        run: kubectl apply -f kubernetes/deployment.yaml
       
       - name: Update Kubernetes secrets
         run: |
