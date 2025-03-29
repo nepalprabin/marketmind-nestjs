@@ -75,4 +75,13 @@ export class AuthService {
       throw new UnauthorizedException('Invalid token');
     }
   }
+  generateTestToken(payload: any) {
+    try {
+      this.logger.log(`Generating test token for: ${JSON.stringify(payload)}`);
+      return this.jwtService.sign(payload);
+    } catch (error) {
+      this.logger.error(`Error generating test token: ${error.message}`);
+      throw new UnauthorizedException('Failed to generate test token');
+    }
+  }
 }

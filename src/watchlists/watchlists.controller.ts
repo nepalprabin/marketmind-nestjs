@@ -16,7 +16,9 @@ import { WatchlistsService } from './watchlists.service';
 import { CreateWatchlistDto } from './dto/create-watchlist.dto';
 import { UpdateWatchlistDto } from './dto/update-watchlist.dto';
 import { AddStockDto } from './dto/add-stock.dto';
+import { ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiBearerAuth()
 @Controller('watchlists')
 @UseGuards(JwtAuthGuard)
 export class WatchlistsController {

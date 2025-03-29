@@ -29,6 +29,15 @@ export class Stock {
   @Column({ nullable: true })
   industry: string;
 
+  @Column({ nullable: true })
+  website: string;
+
+  @Column({ nullable: true })
+  description: string;
+
+  @Column({ nullable: true })
+  logo: string;
+
   @OneToMany(() => WatchlistStock, (watchlistStock) => watchlistStock.stock)
   watchlistStocks: WatchlistStock[];
 

@@ -1,9 +1,10 @@
-# docker-compose.yml
+version: '3.8'
 services:
   api:
     build:
       context: .
-      target: development
+      # Remove target: development since it does not exist.
+      # If you want to use the production stage for API during development, you can leave it out.
     volumes:
       - .:/usr/src/app
       - /usr/src/app/node_modules
@@ -12,6 +13,26 @@ services:
     command: npm run start:dev
     env_file:
       - .env
+    depends_on:
+      - postgres
+    networks:
+      - backend
+
+  importer:
+    build:
+      context: .
+      target: production # Use the production stage for the importer.
+    command: ['node', 'seed.js']
+    env_file:
+      - .env
+    environment:
+      PGHOST: postgres
+      PGUSER: ${DB_USERNAME}
+      PGPASSWORD: ${DB_PASSWORD}
+      PGDATABASE: ${DB_NAME}
+      PGPORT: 5432
+    volumes:
+      - ./companies_converted.json:/usr/src/app/companies_converted.json:ro
     depends_on:
       - postgres
     networks:
@@ -49,5 +70,3 @@ services:
 
 networks:
   backend:
-# volumes:
-#   postgres_data:

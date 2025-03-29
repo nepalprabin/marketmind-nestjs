@@ -49,8 +49,9 @@ export class UsersService {
   }
 
   async update(id: string, userData: Partial<User>): Promise<User> {
+    const { watchlists, ...updateData } = userData;
     try {
-      await this.usersRepository.update(id, userData);
+      await this.usersRepository.update(id, updateData);
       return this.findOne(id);
     } catch (error) {
       this.logger.error(`Error updating user: ${error.message}`);
