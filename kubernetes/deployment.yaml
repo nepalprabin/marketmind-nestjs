@@ -1,0 +1,126 @@
+# namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: marketmind
+---
+# deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marketmind-api
+  namespace: marketmind
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: marketmind-api
+  template:
+    metadata:
+      labels:
+        app: marketmind-api
+    spec:
+      containers:
+      - name: marketmind-api
+        image: ${ECR_REPOSITORY_URL}:${IMAGE_TAG}
+        ports:
+        - containerPort: 3000
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: DATABASE_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: host
+        - name: DATABASE_PORT
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: port
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: password
+        - name: DATABASE_NAME
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: dbname
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+# service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: marketmind-api
+  namespace: marketmind
+spec:
+  selector:
+    app: marketmind-api
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: ClusterIP
+---
+# ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: marketmind-api
+  namespace: marketmind
+  annotations:
+    kubernetes.io/ingress.class: "alb"
+    alb.ingress.kubernetes.io/scheme: "internet-facing"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    alb.ingress.kubernetes.io/healthcheck-path: "/health"
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: marketmind-api
+            port:
+              number: 80
+---
+# secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: marketmind
+type: Opaque
+data:
+  # These will be populated via CI/CD from AWS Secrets Manager
+  username: ""
+  password: ""
+  host: ""
+  port: ""
+  dbname: ""
