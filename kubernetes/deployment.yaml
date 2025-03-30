@@ -1,10 +1,3 @@
-# namespace.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: marketmind
----
-# deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -72,55 +65,3 @@ spec:
             port: 3000
           initialDelaySeconds: 5
           periodSeconds: 5
----
-# service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: marketmind-api
-  namespace: marketmind
-spec:
-  selector:
-    app: marketmind-api
-  ports:
-  - port: 80
-    targetPort: 3000
-  type: ClusterIP
----
-# ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: marketmind-api
-  namespace: marketmind
-  annotations:
-    kubernetes.io/ingress.class: "alb"
-    alb.ingress.kubernetes.io/scheme: "internet-facing"
-    alb.ingress.kubernetes.io/target-type: "ip"
-    alb.ingress.kubernetes.io/healthcheck-path: "/health"
-spec:
-  rules:
-  - http:
-      paths:
-      - path: /api
-        pathType: Prefix
-        backend:
-          service:
-            name: marketmind-api
-            port:
-              number: 80
----
-# secrets.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: db-credentials
-  namespace: marketmind
-type: Opaque
-data:
-  # These will be populated via CI/CD from AWS Secrets Manager
-  username: ""
-  password: ""
-  host: ""
-  port: ""
-  dbname: ""

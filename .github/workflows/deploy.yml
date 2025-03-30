@@ -1,4 +1,3 @@
-# .github/workflows/deploy.yml
 name: Build and Deploy
 
 on:
@@ -119,9 +118,12 @@ jobs:
           echo "DB_NAME=$(echo $SECRET_VALUE | jq -r '.dbname')" >> $GITHUB_ENV
       
       - name: Create Kubernetes namespace
-        run: kubectl apply -f kubernetes/deployment.yaml
+        run: |
+          kubectl apply -f kubernetes/namespace.yaml
+          # Verify namespace exists before continuing
+          kubectl get namespace marketmind || exit 1
       
-      - name: Update Kubernetes secrets
+      - name: Create Kubernetes secrets
         run: |
           kubectl create secret generic db-credentials \
             --namespace=marketmind \
@@ -132,18 +134,39 @@ jobs:
             --from-literal=dbname=${{ env.DB_NAME }} \
             --dry-run=client -o yaml | kubectl apply -f -
       
+      - name: Prepare Kubernetes manifests
+        run: |
+          # Create directory for processed manifests
+          mkdir -p processed-manifests
+          
+          # Process deployment file with variable substitution
+          sed -e "s|\${ECR_REPOSITORY_URL}|${{ env.ECR_REPOSITORY_URL }}|g" \
+              -e "s|\${IMAGE_TAG}|${{ env.IMAGE_TAG }}|g" \
+              kubernetes/deployment.yaml > processed-manifests/deployment.yaml
+          
+          # Copy other manifests that don't need processing
+          cp kubernetes/service.yaml processed-manifests/
+          cp kubernetes/ingress.yaml processed-manifests/
+      
       - name: Deploy to Kubernetes
         run: |
-          # Replace placeholders in deployment file
-          sed -i "s|\${ECR_REPOSITORY_URL}|${{ env.ECR_REPOSITORY_URL }}|g" kubernetes/deployment.yaml
-          sed -i "s|\${IMAGE_TAG}|${{ env.IMAGE_TAG }}|g" kubernetes/deployment.yaml
-          
-          # Apply Kubernetes manifests
-          kubectl apply -f kubernetes/deployment.yaml
-          kubectl apply -f kubernetes/service.yaml
-          kubectl apply -f kubernetes/ingress.yaml
+          # Apply Kubernetes manifests in the correct order
+          kubectl apply -f processed-manifests/deployment.yaml
+          kubectl apply -f processed-manifests/service.yaml
+          kubectl apply -f processed-manifests/ingress.yaml
       
       - name: Verify deployment
         run: |
-          kubectl rollout status deployment/marketmind-api -n marketmind
+          # Wait for deployment to complete successfully
+          kubectl rollout status deployment/marketmind-api -n marketmind --timeout=300s
+          
+          # Get deployment status
+          DEPLOYMENT_STATUS=$(kubectl get deployment/marketmind-api -n marketmind -o jsonpath='{.status.conditions[?(@.type=="Available")].status}')
+          
+          if [ "$DEPLOYMENT_STATUS" != "True" ]; then
+            echo "Deployment failed to reach Available status"
+            kubectl describe deployment/marketmind-api -n marketmind
+            exit 1
+          fi
+          
           echo "Deployment completed successfully!"
