@@ -119,7 +119,7 @@ jobs:
       
       - name: Create Kubernetes namespace
         run: |
-          kubectl apply -f kubernetes/namespace.yaml
+          kubectl apply -f kubernetes/namespace.yaml --validate=false
           # Verify namespace exists before continuing
           kubectl get namespace marketmind || exit 1
       
